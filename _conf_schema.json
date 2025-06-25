@@ -1,0 +1,19 @@
+{
+    "api_kei": {
+        "description": "ikun 音源密钥",
+        "hint": "IKUN 的音源密钥，需要加群进行购买",
+        "type": "string"
+    },
+    "send_mode": {
+        "description": "发送模式",
+        "hint": "音乐的发送模式",
+        "type": "string",
+        "options": ["card", "record", "text"]
+    },
+    "timeout": {
+        "description": "超时时间",
+        "hint": "等待的超时时间",
+        "type": "int",
+        "default": 20
+    }
+}
