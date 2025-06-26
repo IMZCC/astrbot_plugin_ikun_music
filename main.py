@@ -98,6 +98,8 @@ class MyPlugin(Star):
         # 发卡片
         if platform_name == "aiocqhttp" and send_mode == "card":
             assert isinstance(event, AiocqhttpMessageEvent)
+            audio_url = (await self.api.get_media_source(song_id=song["id"]))["url"]
+            info = await self.api.fetch_extra(str(song["id"]))
             client = event.bot
             is_private  = event.is_private_chat()
             payloads: dict = {
@@ -106,7 +108,10 @@ class MyPlugin(Star):
                         "type": "music",
                         "data": {
                             "type": "163",
-                            "id": str(song["id"]),
+                            "url": info['link'],
+                            'audio': audio_url,
+                            "title": song.get("title"),
+                            "image":info['cover'],
                         },
                     }
                 ],

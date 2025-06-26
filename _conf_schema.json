@@ -1,5 +1,5 @@
 {
-    "api_kei": {
+    "api_key": {
         "description": "ikun 音源密钥",
         "hint": "IKUN 的音源密钥，需要加群进行购买",
         "type": "string"

@@ -80,8 +80,7 @@ class NetEaseMusicAPI:
         }
         self.page_size = page_size
         self.API_URL = "https://api.ikunshare.top:8000"
-        self.API_KEY = ikun_api_key
-        self.timeout = timeout
+        self.API_KEY = api_key
         self.quality_levels = {
             "low": "128k",
             "standard": "320k",
@@ -92,10 +91,34 @@ class NetEaseMusicAPI:
     async def close(self):
         await self.session.close()
 
+    async def _request(
+        self,
+        url: str,
+        data: dict = {},
+        headers: dict = {},
+        cookies: dict = None,
+        method: str = "GET",
+    ):
+        """统一请求接口"""
+        if method.upper() == "POST":
+            async with self.session.post(
+                url, headers=headers, cookies=cookies, data=data
+            ) as response:
+                if response.headers.get("Content-Type") == "application/json":
+                    return await response.json()
+                else:
+                    return json.loads(await response.text())
+
+        elif method.upper() == "GET":
+            async with self.session.get(
+                url, headers=headers, cookies=cookies
+            ) as response:
+                return await response.json(content_type=response.content_type)
+        else:
+            raise ValueError("不支持的请求方式")
+
     async def _post(self, url: str, data: dict):
-        async with self.session.post(url, headers=self.common_headers, data=data) as resp:
-            resp.raise_for_status()
-            return await resp.json()
+        return await self._request(url, headers=self.common_headers, data=data, method="POST")
 
     async def search_base(self, query: str, page: int, search_type: int):
         data = {
@@ -221,24 +244,37 @@ class NetEaseMusicAPI:
         async with self.session.get(url, headers=headers) as resp:
             resp.raise_for_status()
             return await resp.json()
-
+        
+    async def fetch_extra(self, song_id):
+        """
+        获取额外信息
+        """
+        url = f"https://api.paugram.com/netease/?id={song_id}"
+        result =  await self._request(url)
+        return {
+            "title": result.get("title"),
+            "artist": result.get("artist"),
+            "album": result.get("album"),
+            "cover": result.get("cover"),
+            "link": result.get("link"),
+        }
     
 
 # 示例测试方法：
 
 async def main():
-    api = NetEaseMusicAPI()
+    api = NetEaseMusicAPI(api_key='')
     ret = await api.search_music("恒温", 1)
     print(f"找到以下歌曲喵~\n" + "\n".join(
             f"{i + 1}. {song['title']} - {song['artist']} ({song['duration'] // 1000}秒)"
             for i, song in enumerate(ret['data'])
         ))
-
-    resp = await api.get_media_source(ret["data"][0]['id'], "high")
-    print(f"歌曲{ret['data'][0]['title']}播放链接：{resp['url']}")
+    music_id = ret["data"][0]['id']
+    resp = await api.get_media_source(music_id, "high")
+    
+    print(f"歌曲{ret['data'][0]['title']}   歌曲相关信息：{resp}")
     for item in ret["data"]:
         print(item)
-    await api.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
