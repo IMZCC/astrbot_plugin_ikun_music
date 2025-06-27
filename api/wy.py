@@ -62,7 +62,7 @@ class NetEaseCrypto:
 class NetEaseMusicAPI:
     BASE_URL = "https://music.163.com"
 
-    def __init__(self, page_size: int = 5, api_key:str = None):
+    def __init__(self, **kwargs):
         self.session = aiohttp.ClientSession()
         self.common_headers = {
             "authority": "music.163.com",
@@ -78,9 +78,9 @@ class NetEaseMusicAPI:
             "referer": "https://music.163.com/search/",
             "accept-language": "zh-CN,zh;q=0.9",
         }
-        self.page_size = page_size
+        self.page_size = kwargs.get("page_size")
         self.API_URL = "https://api.ikunshare.top:8000"
-        self.API_KEY = api_key
+        self.API_KEY = kwargs.get("api_key")
         self.quality_levels = {
             "low": "128k",
             "standard": "320k",

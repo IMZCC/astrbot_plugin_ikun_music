@@ -15,5 +15,11 @@
         "hint": "等待的超时时间",
         "type": "int",
         "default": 20
+    },
+    "page_size": {
+        "description": "歌曲列表个数",
+        "hint": "歌曲列表个数",
+        "type": "int",
+        "default": 5
     }
 }
