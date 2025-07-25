@@ -6,6 +6,7 @@ from astrbot.api import logger
 from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.message.components import Record
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import AiocqhttpMessageEvent
+from astrbot.core.platform.sources.wechatpadpro.wechatpadpro_message_event import WeChatPadProMessageEvent
 import astrbot.api.message_components as Comp
 from astrbot.core.utils.session_waiter import (
     session_waiter,
@@ -16,23 +17,95 @@ from astrbot.core.utils.session_waiter import (
 SAVED_SONGS_DIR = Path("data", "plugins_data", "astrbot_plugin_ikun_music", "songs")
 SAVED_SONGS_DIR.mkdir(parents=True, exist_ok=True)
 
+contentXML= """<msg>
+   <appmsg appid="wxid_xxxxxxxx" sdkver="2.0">
+       <title>标题内容</title>
+       <des>描述内容</des>
+       <action>跳转地址或操作行为</action>
+       <content>具体内容或消息正文</content>
+       <url>跳转URL</url>
+       <appattach>
+           <totallen>附件总长度</totallen>
+           <attachid>附件ID</attachid>
+           <fileext>文件扩展名</fileext>
+       </appattach>
+       <extinfo>扩展信息</extinfo>
+   </appmsg>
+</msg>
+"""
+
+
 @register("ikun_music", "IMZCC", "基于 IKUN 音源的音乐插件", "1.0.0", "https://github.com/IMZCC/astrbot_plugin_ikun_music")
 class MyPlugin(Star):
+    # 支持的音乐源
+    SUPPORTED_SOURCES = {
+        "wy": "网易云音乐",
+        "qq": "QQ音乐"
+    }
+    
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
-        from .api.wy import NetEaseMusicAPI
-        self.api = NetEaseMusicAPI(**config)
+        
         self.timeout = config.get("timeout", 20)  # 默认超时时间为20秒
-        self.send_mode = config.get("send_mode", "card")  # 默认发送模式为卡片
+        self.send_mode = config.get("send_mode", "text")  # 默认发送模式为卡片
+        self.music_source = config.get("music_source", "wy")  # 默认音乐源为wy
+        
+        # 初始化API
+        self.init_api()
+
+    def init_api(self):
+        """初始化音乐API"""
+        config = self.config
+        if self.music_source == 'wy':
+            from .api.wy import NetEaseMusicAPI
+            self.api = NetEaseMusicAPI(**config)
+        elif self.music_source == 'qq':
+            from .api.qq import QQMusicAPI
+            self.api = QQMusicAPI(**config)
+
 
     @filter.command("music")
     async def search_music(self, event: AstrMessageEvent):
-        '''搜索用户的点歌''' # 这是 handler 的描述，将会被解析方便用户了解插件内容。非常建议填写。
-        args = event.message_str.replace(" music", "").split()
+        '''搜索用户的点歌或管理音乐源''' # 这是 handler 的描述，将会被解析方便用户了解插件内容。非常建议填写。
+        message = event.message_str.replace("music", "").strip()
+        args = message.split()
         logger.info(f"Received music command with args: {args}")
+        
+        # 处理 music source 相关命令
+        if args and args[0] == "source":
+            if len(args) == 1:
+                # 列出支持的音乐源
+                source_list = "\n".join([f"{key}: {name}" for key, name in self.SUPPORTED_SOURCES.items()])
+                current_source = self.SUPPORTED_SOURCES.get(self.music_source, "未知")
+                yield event.plain_result(f"当前音乐源：{self.music_source} ({current_source})\n\n支持的音乐源：\n{source_list}\n\n使用 'music source <源代码>' 切换音乐源")
+                return
+            elif len(args) == 2:
+                # 切换音乐源
+                new_source = args[1].lower()
+                if new_source not in self.SUPPORTED_SOURCES:
+                    yield event.plain_result(f"不支持的音乐源：{new_source}\n支持的音乐源：{', '.join(self.SUPPORTED_SOURCES.keys())}")
+                    return
+                
+                old_source = self.music_source
+                self.music_source = new_source
+                try:
+                    # 重新初始化API
+                    self.init_api()
+                    source_name = self.SUPPORTED_SOURCES[new_source]
+                    yield event.plain_result(f"音乐源已切换为：{new_source} ({source_name})")
+                except Exception as e:
+                    # 如果初始化失败，回滚到原来的音乐源
+                    self.music_source = old_source
+                    self.init_api()
+                    logger.error(f"切换音乐源失败：{e}")
+                    yield event.plain_result(f"切换音乐源失败，已回滚到 {old_source}：{str(e)}")
+                return
+        
+        # 原有的搜索音乐逻辑
         if not args:
-            yield event.plain_result("请输入要搜索的歌曲名。")
+            yield event.plain_result("请输入要搜索的歌曲名，或使用 'music source' 查看音乐源设置。")
+            return
 
         # 解析序号和歌名
         index: int = int(args[-1]) if args[-1].isdigit() else 1
@@ -97,36 +170,50 @@ class MyPlugin(Star):
 
         # 发卡片
         if platform_name == "aiocqhttp" and send_mode == "card":
-            assert isinstance(event, AiocqhttpMessageEvent)
             audio_url = (await self.api.get_media_source(song_id=song["id"]))["url"]
             info = await self.api.fetch_extra(str(song["id"]))
             client = event.bot
             is_private  = event.is_private_chat()
-            payloads: dict = {
-                "message": [
-                    {
-                        "type": "music",
-                        "data": {
-                            "type": "163",
-                            "url": info['link'],
-                            'audio': audio_url,
-                            "title": song.get("title"),
-                            "image":info['cover'],
-                        },
-                    }
-                ],
-            }
-            if is_private:
-                payloads["user_id"] = event.get_sender_id()
-                await client.api.call_action("send_private_msg", **payloads)
-            else:
-                payloads["group_id"] = event.get_group_id()
-                await client.api.call_action("send_group_msg", **payloads)
-
+            if isinstance(event, AiocqhttpMessageEvent):
+                
+                payloads: dict = {
+                    "message": [
+                        {
+                            "type": "music",
+                            "data": {
+                                "type": "163" if self.music_source == "wy" else "qq",
+                                "url": info['link'] if self.music_source == "wy" else f'https://y.qq.com/n/ryqq/songDetail/{song["id"]}',
+                                'audio': audio_url,
+                                "title": song.get("title"),
+                                "image": info['cover'] if self.music_source == "wy" else song['artwork'],
+                            },
+                        }
+                    ],
+                }
+                if is_private:
+                    payloads["user_id"] = event.get_sender_id()
+                    await client.api.call_action("send_private_msg", **payloads)
+                else:
+                    payloads["group_id"] = event.get_group_id()
+                    await client.api.call_action("send_group_msg", **payloads)
+            elif isinstance(event, WeChatPadProMessageEvent):
+                payloads: dict = {
+                    "AppList": [
+                        {
+                            "ContentType": 8,
+                            "ContentXML": contentXML,
+                            "ToUserName": event.get_sender_id() if is_private else event.get_group_id(),
+                        }
+                    ],
+                }
+                if is_private:
+                    payloads["user_id"] = event.get_sender_id()
+                    await client.api.call_action("send_private_msg", **payloads)
+                else:
+                    payloads["group_id"] = event.get_group_id()
+                    await client.api.call_action("send_group_msg", **payloads)
         # 发语音
-        elif (
-            platform_name in ["telegram", "lark", "aiocqhttp"] and send_mode == "record"
-        ):
+        elif platform_name in ["telegram", "lark", "aiocqhttp"] and send_mode == "record":
             audio_url = (await self.api.get_media_source(song_id=song["id"]))["url"]
             await event.send(event.chain_result([Record.fromURL(audio_url)]))
 

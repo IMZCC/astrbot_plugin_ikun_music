@@ -4,6 +4,13 @@
         "hint": "IKUN 的音源密钥，需要加群进行购买",
         "type": "string"
     },
+    "music_source": {
+        "description": "音乐源",
+        "hint": "搜索音乐源",
+        "type": "string",
+        "default": "wy",
+        "options": ["wy", "qq"]
+    },
     "send_mode": {
         "description": "发送模式",
         "hint": "音乐的发送模式",
