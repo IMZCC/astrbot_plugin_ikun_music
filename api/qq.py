@@ -10,7 +10,6 @@ from typing import Dict, List, Optional, Union
 
 class QQMusicAPI:
     BASE_URL = "https://u.y.qq.com"
-    UPDATE_URL = "https://api.ikunshare.com:8000/script/qq?key=QQ_21089b3a-NVX96FT6I4G9JCES"
 
     def __init__(self, **kwargs):
         self.session = aiohttp.ClientSession()
@@ -43,7 +42,7 @@ class QQMusicAPI:
             "ape": {"s": "A000", "e": ".ape"},
             "flac": {"s": "F000", "e": ".flac"},
         }
-        self.API_URL = "https://api.ikunshare.top:8000"
+        self.API_URL = kwargs.get("api_url")
         self.API_KEY = kwargs.get("api_key")
 
     async def close(self):

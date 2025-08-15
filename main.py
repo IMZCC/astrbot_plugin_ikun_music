@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 import traceback
 from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
@@ -16,24 +17,6 @@ from astrbot.core.utils.session_waiter import (
 
 SAVED_SONGS_DIR = Path("data", "plugins_data", "astrbot_plugin_ikun_music", "songs")
 SAVED_SONGS_DIR.mkdir(parents=True, exist_ok=True)
-
-contentXML= """<msg>
-   <appmsg appid="wxid_xxxxxxxx" sdkver="2.0">
-       <title>标题内容</title>
-       <des>描述内容</des>
-       <action>跳转地址或操作行为</action>
-       <content>具体内容或消息正文</content>
-       <url>跳转URL</url>
-       <appattach>
-           <totallen>附件总长度</totallen>
-           <attachid>附件ID</attachid>
-           <fileext>文件扩展名</fileext>
-       </appattach>
-       <extinfo>扩展信息</extinfo>
-   </appmsg>
-</msg>
-"""
-
 
 @register("ikun_music", "IMZCC", "基于 IKUN 音源的音乐插件", "1.0.0", "https://github.com/IMZCC/astrbot_plugin_ikun_music")
 class MyPlugin(Star):
@@ -122,6 +105,8 @@ class MyPlugin(Star):
             f"{i + 1}. {song['title']} - {song['artist']} ({song['duration'] // 1000}秒)"
             for i, song in enumerate(songs['data'])
         ))
+        # 延迟一点点
+        await asyncio.sleep(0.2)
 
         @session_waiter(timeout=self.timeout, record_history_chains=False)
         async def empty_mention_waiter(controller: SessionController, event: AstrMessageEvent):

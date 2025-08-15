@@ -79,7 +79,7 @@ class NetEaseMusicAPI:
             "accept-language": "zh-CN,zh;q=0.9",
         }
         self.page_size = kwargs.get("page_size")
-        self.API_URL = "https://api.ikunshare.top:8000"
+        self.API_URL = kwargs.get("api_url")
         self.API_KEY = kwargs.get("api_key")
         self.quality_levels = {
             "low": "128k",
