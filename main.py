@@ -33,6 +33,7 @@ class MyPlugin(Star):
         self.timeout = config.get("timeout", 20)  # 默认超时时间为20秒
         self.send_mode = config.get("send_mode", "text")  # 默认发送模式为卡片
         self.music_source = config.get("music_source", "wy")  # 默认音乐源为wy
+        self.page_size = config.get("page_size", 5)  # 默认每页显示5首歌曲
         
         # 初始化API
         self.init_api()
@@ -85,9 +86,10 @@ class MyPlugin(Star):
                     yield event.plain_result(f"切换音乐源失败，已回滚到 {old_source}：{str(e)}")
                 return
         
+            
         # 原有的搜索音乐逻辑
         if not args:
-            yield event.plain_result("请输入要搜索的歌曲名，或使用 'music source' 查看音乐源设置。")
+            yield event.plain_result("请输入要搜索的歌曲名，或使用 'music source' 查看音乐源设置，或使用 'music lyric <歌曲名>' 查看歌词。")
             return
 
         # 解析序号和歌名
@@ -101,25 +103,34 @@ class MyPlugin(Star):
         if not songs or 'data' not in songs or not songs['data']:
             yield event.plain_result("没能找到这首歌喵~")
             return
-        yield event.plain_result(f"找到以下歌曲喵~\n" + "\n".join(
-            f"{i + 1}. {song['title']} - {song['artist']} ({song['duration'] // 1000}秒)"
+            
+        song_list_text = "\n".join(
+            f"{i + 1}. {song['title']} - {song['artist']} ({self.format_time(song['duration'])})"
             for i, song in enumerate(songs['data'])
-        ))
+        )
+        
+        help_text = "\n\n请输入序号选择歌曲，或输入 '0' 重新搜索"
+        yield event.plain_result(f"找到以下歌曲喵~\n{song_list_text}{help_text}")
         # 延迟一点点
         await asyncio.sleep(0.2)
 
         @session_waiter(timeout=self.timeout, record_history_chains=False)
         async def empty_mention_waiter(controller: SessionController, event: AstrMessageEvent):
-            index = event.message_str
-            if not index.isdigit() or int(index) < 1 or int(index) > len(songs['data']):
+            user_input = event.message_str.strip()
+            
+            if user_input == '0':
+                await event.send(event.plain_result("请重新输入 music <歌曲名> 进行搜索"))
+                controller.stop()
+                return
+                
+            if not user_input.isdigit() or int(user_input) < 1 or int(user_input) > len(songs['data']):
                 await event.send(event.plain_result("请输入正确的序号喵~ 重新来一次吧!"))
                 controller.stop()
                 return
-            selected_song = songs['data'][int(index) - 1]
+                
+            selected_song = songs['data'][int(user_input) - 1]
             # 发送歌曲
             await self._send_song(event=event, song=selected_song)
-            
-
             controller.stop()
 
         try:
@@ -130,8 +141,11 @@ class MyPlugin(Star):
             logger.error(traceback.format_exc())
             logger.error("点歌发生错误" + str(e))
 
+
     async def terminate(self):
         '''可选择实现 terminate 函数，当插件被卸载/停用时会调用。'''
+        if hasattr(self, 'api') and hasattr(self.api, 'close'):
+            await self.api.close()
 
     @staticmethod
     def format_time(duration_ms):
@@ -149,64 +163,100 @@ class MyPlugin(Star):
         
     async def _send_song(self, event: AstrMessageEvent, song: dict):
         """发送歌曲"""
+        try:
+            platform_name = event.get_platform_name()
+            send_mode = self.send_mode
 
-        platform_name = event.get_platform_name()
-        send_mode = self.send_mode
-
-        # 发卡片
-        if platform_name == "aiocqhttp" and send_mode == "card":
-            audio_url = (await self.api.get_media_source(song_id=song["id"]))["url"]
-            info = await self.api.fetch_extra(str(song["id"]))
-            client = event.bot
-            is_private  = event.is_private_chat()
-            if isinstance(event, AiocqhttpMessageEvent):
+            # 发卡片
+            if platform_name == "aiocqhttp" and send_mode == "card":
+                audio_url = (await self.api.get_media_source(song_id=song["id"]))["url"]
+                info = await self.api.fetch_extra(str(song["id"]))
                 
-                payloads: dict = {
-                    "message": [
-                        {
-                            "type": "music",
-                            "data": {
-                                "type": "163" if self.music_source == "wy" else "qq",
-                                "url": info['link'] if self.music_source == "wy" else f'https://y.qq.com/n/ryqq/songDetail/{song["id"]}',
-                                'audio': audio_url,
-                                "title": song.get("title"),
-                                "image": info['cover'] if self.music_source == "wy" else song['artwork'],
-                            },
-                        }
-                    ],
-                }
-                if is_private:
-                    payloads["user_id"] = event.get_sender_id()
-                    await client.api.call_action("send_private_msg", **payloads)
-                else:
-                    payloads["group_id"] = event.get_group_id()
-                    await client.api.call_action("send_group_msg", **payloads)
-            elif isinstance(event, WeChatPadProMessageEvent):
-                payloads: dict = {
-                    "AppList": [
-                        {
-                            "ContentType": 8,
-                            "ContentXML": contentXML,
-                            "ToUserName": event.get_sender_id() if is_private else event.get_group_id(),
-                        }
-                    ],
-                }
-                if is_private:
-                    payloads["user_id"] = event.get_sender_id()
-                    await client.api.call_action("send_private_msg", **payloads)
-                else:
-                    payloads["group_id"] = event.get_group_id()
-                    await client.api.call_action("send_group_msg", **payloads)
-        # 发语音
-        elif platform_name in ["telegram", "lark", "aiocqhttp"] and send_mode == "record":
-            audio_url = (await self.api.get_media_source(song_id=song["id"]))["url"]
-            await event.send(event.chain_result([Record.fromURL(audio_url)]))
+                # 如果获取不到音频链接，使用文本模式
+                if not audio_url:
+                    await self._send_song_as_text(event, song)
+                    return
+                    
+                client = event.bot
+                is_private = event.is_private_chat()
+                
+                if isinstance(event, AiocqhttpMessageEvent):
+                    payloads: dict = {
+                        "message": [
+                            {
+                                "type": "music",
+                                "data": {
+                                    "type": "163" if self.music_source == "wy" else "qq",
+                                    "url": info['link'] if self.music_source == "wy" else f'https://y.qq.com/n/ryqq/songDetail/{song["id"]}',
+                                    'audio': audio_url,
+                                    "title": song.get("title"),
+                                    "image": info['cover'] if self.music_source == "wy" else song['artwork'],
+                                },
+                            }
+                        ],
+                    }
+                    if is_private:
+                        payloads["user_id"] = event.get_sender_id()
+                        await client.api.call_action("send_private_msg", **payloads)
+                    else:
+                        payloads["group_id"] = event.get_group_id()
+                        await client.api.call_action("send_group_msg", **payloads)
+                elif isinstance(event, WeChatPadProMessageEvent):
+                    # 构造微信音乐卡片XML
+                    contentXML = f"""<msg><appmsg appid="" sdkver="0x70900000"><title>{song.get("title")}</title><des>{song.get("artist")}</des><action>view</action><type>3</type><showtype>0</showtype><soundtype>1</soundtype><mediatagname></mediatagname><messageext></messageext><messageaction></messageaction><content></content><contentattr>0</contentattr><url>{info['link'] if self.music_source == "wy" else f'https://y.qq.com/n/ryqq/songDetail/{song["id"]}'}</url><lowurl></lowurl><dataurl>{audio_url}</dataurl><lowdataurl></lowdataurl><songalbumurl></songalbumurl><songlyric></songlyric><mediadataurl></mediadataurl><weburl></weburl><autostart>false</autostart><headerstyle>0</headerstyle></appmsg></msg>"""
+                    payloads: dict = {
+                        "AppList": [
+                            {
+                                "ContentType": 8,
+                                "ContentXML": contentXML,
+                                "ToUserName": event.get_sender_id() if is_private else event.get_group_id(),
+                            }
+                        ],
+                    }
+                    await client.api.call_action("send_app_msg", **payloads)
+                    
+            # 发语音
+            elif platform_name in ["telegram", "lark", "aiocqhttp"] and send_mode == "record":
+                media_result = await self.api.get_media_source(song_id=song["id"])
+                audio_url = media_result["url"]
+                
+                # 如果获取不到音频链接，使用文本模式
+                if not audio_url:
+                    await self._send_song_as_text(event, song)
+                    return
+                    
+                await event.send(event.chain_result([Record.fromURL(audio_url)]))
 
-        # 发文字
-        else:
-            audio_url = (await self.api.get_media_source(song_id=song["id"]))["url"]
+            # 发文字
+            else:
+                await self._send_song_as_text(event, song)
+                
+        except Exception as e:
+            logger.error(f"发送歌曲时出错: {e}")
+            # 出错时降级为文本发送
+            await self._send_song_as_text(event, song)
+
+    async def _send_song_as_text(self, event: AstrMessageEvent, song: dict):
+        """以文本形式发送歌曲信息"""
+        try:
+            media_result = await self.api.get_media_source(song_id=song["id"])
+            audio_url = media_result.get("url", "")
+            
             song_info_str = (
-                f"🎶{song.get('title')} - {song.get('artist')} {self.format_time(song['duration'])}\n"
-                f"🔗链接：{audio_url}"
+                f"🎶 {song.get('title', '未知歌曲')} - {song.get('artist', '未知歌手')}\n"
+                f"⏰ 时长: {self.format_time(song.get('duration', 0))}\n"
             )
+            
+            if audio_url:
+                song_info_str += f"🔗 播放链接：{audio_url}\n"
+            else:
+                song_info_str += "❌ 未能获取播放链接\n"
+                
+            # 添加音乐源信息
+            source_name = self.SUPPORTED_SOURCES.get(self.music_source, "未知")
+            song_info_str += f"📻 来源: {source_name}"
+            
             await event.send(event.plain_result(song_info_str))
+        except Exception as e:
+            logger.error(f"以文本形式发送歌曲信息时出错: {e}")
+            await event.send(event.plain_result("发送歌曲信息时出现错误"))

@@ -12,7 +12,7 @@ class QQMusicAPI:
     BASE_URL = "https://u.y.qq.com"
 
     def __init__(self, **kwargs):
-        self.session = aiohttp.ClientSession()
+        self.session = None
         self.page_size = kwargs.get("page_size", 20)
         self.common_headers = {
             "referer": "https://y.qq.com",
@@ -26,7 +26,6 @@ class QQMusicAPI:
             2: "album", 
             1: "singer",
             3: "songlist",
-            7: "song",
             12: "mv",
         }
         self.quality_levels = {
@@ -45,8 +44,16 @@ class QQMusicAPI:
         self.API_URL = kwargs.get("api_url")
         self.API_KEY = kwargs.get("api_key")
 
+    async def get_session(self):
+        """获取或创建 aiohttp session"""
+        if self.session is None or self.session.closed:
+            self.session = aiohttp.ClientSession()
+        return self.session
+
     async def close(self):
-        await self.session.close()
+        """关闭 aiohttp session"""
+        if self.session and not self.session.closed:
+            await self.session.close()
 
     def format_music_item(self, item: dict) -> dict:
         """格式化音乐项目"""
@@ -68,7 +75,6 @@ class QQMusicAPI:
             "artist": artist,
             "artwork": f"https://y.gtimg.cn/music/photo_new/T002R800x800M000{album_mid}.jpg" if album_mid else None,
             "album": album_name,
-            "lrc": item.get("lyric"),
             "albumid": item.get("albumid"),
             "albummid": album_mid,
             "duration": item.get("interval", 0) * 1000  # 转换为毫秒
@@ -114,28 +120,33 @@ class QQMusicAPI:
 
     async def _request(self, url: str, method: str = "GET", data: dict = None, headers: dict = None):
         """统一请求接口"""
+        session = await self.get_session()
         request_headers = self.common_headers.copy()
         if headers:
             request_headers.update(headers)
             
-        if method.upper() == "POST":
-            async with self.session.post(url, json=data, headers=request_headers) as response:
-                text = await response.text()
-                # 处理可能的JSONP格式
-                text = re.sub(r'callback\(|MusicJsonCallback\(|jsonCallback\(|\)$', '', text)
-                try:
-                    return json.loads(text)
-                except:
-                    return {}
-        else:
-            async with self.session.get(url, headers=request_headers) as response:
-                text = await response.text()
-                # 处理可能的JSONP格式
-                text = re.sub(r'callback\(|MusicJsonCallback\(|jsonCallback\(|\)$', '', text)
-                try:
-                    return json.loads(text)
-                except:
-                    return {}
+        try:
+            if method.upper() == "POST":
+                async with session.post(url, json=data, headers=request_headers) as response:
+                    text = await response.text()
+                    # 处理可能的JSONP格式
+                    text = re.sub(r'callback\(|MusicJsonCallback\(|jsonCallback\(|\)$', '', text)
+                    try:
+                        return json.loads(text)
+                    except:
+                        return {}
+            else:
+                async with session.get(url, headers=request_headers) as response:
+                    text = await response.text()
+                    # 处理可能的JSONP格式
+                    text = re.sub(r'callback\(|MusicJsonCallback\(|jsonCallback\(|\)$', '', text)
+                    try:
+                        return json.loads(text)
+                    except:
+                        return {}
+        except Exception as e:
+            print(f"请求失败: {url}, 错误: {e}")
+            return {}
 
     async def search_base(self, query: str, page: int, search_type: int):
         """基础搜索方法"""
@@ -168,14 +179,19 @@ class QQMusicAPI:
         
         url = "https://c.y.qq.com/soso/fcgi-bin/search_for_qq_cp"
         
-        async with self.session.get(url, params=params, headers=self.common_headers) as response:
-            text = await response.text()
-            # 处理可能的JSONP格式
-            text = re.sub(r'callback\(|MusicJsonCallback\(|jsonCallback\(|\)$', '', text)
-            try:
-                response_data = json.loads(text)
-            except:
-                return {"isEnd": True, "data": []}
+        session = await self.get_session()
+        try:
+            async with session.get(url, params=params, headers=self.common_headers) as response:
+                text = await response.text()
+                # 处理可能的JSONP格式
+                text = re.sub(r'callback\(|MusicJsonCallback\(|jsonCallback\(|\)$', '', text)
+                try:
+                    response_data = json.loads(text)
+                except:
+                    return {"isEnd": True, "data": []}
+        except Exception as e:
+            print(f"搜索请求失败: {e}")
+            return {"isEnd": True, "data": []}
         
         data = response_data.get("data", {})
         
@@ -261,26 +277,6 @@ class QQMusicAPI:
             print(f"歌单搜索出错: {e}")
             return {"isEnd": True, "data": []}
 
-    async def search_lyric(self, query: str, page: int):
-        """搜索歌词"""
-        try:
-            result = await self.search_base(query, page, 7)
-            lyrics = []
-            
-            for item in result["data"]:
-                formatted_item = self.format_music_item(item)
-                # 保持与网易云音乐API一致的字段名
-                formatted_item["rawLyrics"] = item.get("content")
-                lyrics.append(formatted_item)
-            
-            return {
-                "isEnd": result["isEnd"],
-                "data": lyrics
-            }
-        except Exception as e:
-            # 如果歌词搜索失败，返回空结果
-            print(f"歌词搜索出错: {e}")
-            return {"isEnd": True, "data": []}
 
     async def get_media_source(self, song_id: str, quality: str = "high"):
         """获取音乐播放链接"""
@@ -291,52 +287,28 @@ class QQMusicAPI:
         if not quality_param:
             raise ValueError(f"未知音质: {quality}，可选：{list(self.quality_levels.keys())}")
 
+        # 检查必要参数
+        if not self.API_URL:
+            raise ValueError("API_URL 未配置")
+            
+        if not self.API_KEY:
+            raise ValueError("API_KEY 未配置")
+
         url = f"{self.API_URL}/url?source=tx&songId={song_id}&quality={quality_param}"
         headers = {
             "X-Request-Key": self.API_KEY,
         }
         
-        async with self.session.get(url, headers=headers) as resp:
-            resp.raise_for_status()
-            result = await resp.json()
-            return {"url": result.get("url")}
+        session = await self.get_session()
+        try:
+            async with session.get(url, headers=headers) as resp:
+                resp.raise_for_status()
+                result = await resp.json()
+                return {"url": result.get("url")}
+        except Exception as e:
+            print(f"获取播放链接失败: {e}")
+            return {"url": None}
 
-    async def get_lyric(self, music_item: dict):
-        """获取歌词"""
-        songmid = music_item.get("songmid")
-        if not songmid:
-            return {"rawLrc": "", "translation": ""}
-            
-        import time
-        url = (f"http://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg"
-               f"?songmid={songmid}&pcachetime={int(time.time() * 1000)}"
-               f"&g_tk=5381&loginUin=0&hostUin=0&inCharset=utf8&outCharset=utf-8"
-               f"&notice=0&platform=yqq&needNewCode=0")
-        
-        headers = {"Referer": "https://y.qq.com", "Cookie": "uin="}
-        
-        async with self.session.get(url, headers=headers) as response:
-            text = await response.text()
-            # 移除jsonp回调
-            text = re.sub(r'callback\(|MusicJsonCallback\(|jsonCallback\(|\)$', '', text)
-            
-            try:
-                result = json.loads(text)
-                raw_lyric = ""
-                translation = ""
-                
-                if result.get("lyric"):
-                    raw_lyric = base64.b64decode(result["lyric"]).decode('utf-8')
-                    
-                if result.get("trans"):
-                    translation = base64.b64decode(result["trans"]).decode('utf-8')
-                
-                return {
-                    "rawLrc": raw_lyric,
-                    "translation": translation
-                }
-            except:
-                return {"rawLrc": "", "translation": ""}
 
     async def get_album_info(self, album_item: dict):
         """获取专辑信息"""
@@ -396,17 +368,22 @@ class QQMusicAPI:
         
         headers = {"Referer": "https://y.qq.com/n/yqq/playlist", "Cookie": "uin="}
         
-        async with self.session.get(url, headers=headers) as response:
-            text = await response.text()
-            # 移除jsonp回调
-            text = re.sub(r'callback\(|MusicJsonCallback\(|jsonCallback\(|\)$', '', text)
-            
-            try:
-                result = json.loads(text)
-                song_list = result.get("cdlist", [{}])[0].get("songlist", [])
-                return [self.format_music_item(song) for song in song_list]
-            except:
-                return []
+        session = await self.get_session()
+        try:
+            async with session.get(url, headers=headers) as response:
+                text = await response.text()
+                # 移除jsonp回调
+                text = re.sub(r'callback\(|MusicJsonCallback\(|jsonCallback\(|\)$', '', text)
+                
+                try:
+                    result = json.loads(text)
+                    song_list = result.get("cdlist", [{}])[0].get("songlist", [])
+                    return [self.format_music_item(song) for song in song_list]
+                except:
+                    return []
+        except Exception as e:
+            print(f"导入歌单失败: {e}")
+            return []
 
     async def fetch_extra(self, song_id: str):
         """获取额外信息 - 使用songmid"""
@@ -423,7 +400,7 @@ class QQMusicAPI:
 
 # 示例测试方法
 async def main():
-    api = QQMusicAPI(page_size=20,api_key="")
+    api = QQMusicAPI(page_size=20, api_url="http://api.ikunshare.com", api_key="test_key")
     try:
         # 搜索音乐
         ret = await api.search_music("恒温", 1)
@@ -442,9 +419,6 @@ async def main():
                 resp = await api.get_media_source(songmid, "high")
                 print(f"歌曲{music_item['title']} 播放链接：{resp}")
                 
-                # 获取歌词
-                lyric = await api.get_lyric(music_item)
-                print(f"歌词：{lyric.get('rawLrc', '')[:100]}...")
                 
     except Exception as e:
         print(f"测试出错: {e}")

@@ -1,7 +1,7 @@
 {
     "api_url":{
          "description": "ikun 音源 URL",
-        "hint": "IKUN 的音源URL",
+        "hint": "IKUN 的音源URL，例如: http://api.ikunshare.com",
         "type": "string",
         "default": "http://api.ikunshare.com"
     },
@@ -12,26 +12,27 @@
     },
     "music_source": {
         "description": "音乐源",
-        "hint": "搜索音乐源",
+        "hint": "搜索音乐源，wy=网易云音乐，qq=QQ音乐",
         "type": "string",
         "default": "wy",
         "options": ["wy", "qq"]
     },
     "send_mode": {
         "description": "发送模式",
-        "hint": "音乐的发送模式",
+        "hint": "音乐的发送模式，card=音乐卡片，record=语音消息，text=文本链接",
         "type": "string",
+        "default": "text",
         "options": ["card", "record", "text"]
     },
     "timeout": {
         "description": "超时时间",
-        "hint": "等待的超时时间",
+        "hint": "等待用户选择歌曲的超时时间（秒）",
         "type": "int",
         "default": 20
     },
     "page_size": {
         "description": "歌曲列表个数",
-        "hint": "歌曲列表个数",
+        "hint": "每次搜索显示的歌曲数量",
         "type": "int",
         "default": 5
     }

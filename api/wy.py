@@ -63,7 +63,7 @@ class NetEaseMusicAPI:
     BASE_URL = "https://music.163.com"
 
     def __init__(self, **kwargs):
-        self.session = aiohttp.ClientSession()
+        self.session = None
         self.common_headers = {
             "authority": "music.163.com",
             "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -78,7 +78,7 @@ class NetEaseMusicAPI:
             "referer": "https://music.163.com/search/",
             "accept-language": "zh-CN,zh;q=0.9",
         }
-        self.page_size = kwargs.get("page_size")
+        self.page_size = kwargs.get("page_size", 5)
         self.API_URL = kwargs.get("api_url")
         self.API_KEY = kwargs.get("api_key")
         self.quality_levels = {
@@ -88,8 +88,16 @@ class NetEaseMusicAPI:
             "super": "hires",
         }
 
+    async def get_session(self):
+        """获取或创建 aiohttp session"""
+        if self.session is None or self.session.closed:
+            self.session = aiohttp.ClientSession()
+        return self.session
+
     async def close(self):
-        await self.session.close()
+        """关闭 aiohttp session"""
+        if self.session and not self.session.closed:
+            await self.session.close()
 
     async def _request(
         self,
@@ -100,22 +108,29 @@ class NetEaseMusicAPI:
         method: str = "GET",
     ):
         """统一请求接口"""
-        if method.upper() == "POST":
-            async with self.session.post(
-                url, headers=headers, cookies=cookies, data=data
-            ) as response:
-                if response.headers.get("Content-Type") == "application/json":
-                    return await response.json()
-                else:
-                    return json.loads(await response.text())
+        session = await self.get_session()
+        
+        try:
+            if method.upper() == "POST":
+                async with session.post(
+                    url, headers=headers, cookies=cookies, data=data
+                ) as response:
+                    if response.headers.get("Content-Type") == "application/json":
+                        return await response.json()
+                    else:
+                        return json.loads(await response.text())
 
-        elif method.upper() == "GET":
-            async with self.session.get(
-                url, headers=headers, cookies=cookies
-            ) as response:
-                return await response.json(content_type=response.content_type)
-        else:
-            raise ValueError("不支持的请求方式")
+            elif method.upper() == "GET":
+                async with session.get(
+                    url, headers=headers, cookies=cookies
+                ) as response:
+                    content_type = response.content_type or "application/json"
+                    return await response.json(content_type=content_type)
+            else:
+                raise ValueError("不支持的请求方式")
+        except Exception as e:
+            print(f"请求失败: {url}, 错误: {e}")
+            return {}
 
     async def _post(self, url: str, data: dict):
         return await self._request(url, headers=self.common_headers, data=data, method="POST")
@@ -133,100 +148,110 @@ class NetEaseMusicAPI:
         return await self._post(f"{self.BASE_URL}/weapi/search/get", encrypted_data)
 
     async def search_music(self, query: str, page: int):
-        res = await self.search_base(query, page, 1)
-        songs = [
-            {
-                "id": song["id"],
-                "title": song["name"],
-                "artist": "、".join([artist["name"] for artist in song["artists"]]),
-                "album": song["al"]["name"] if "al" in song else None,
-                "duration": song["duration"]
+        try:
+            res = await self.search_base(query, page, 1)
+            songs = [
+                {
+                    "id": song["id"],
+                    "title": song["name"],
+                    "artist": "、".join([artist["name"] for artist in song["artists"]]),
+                    "album": song["al"]["name"] if "al" in song else None,
+                    "artwork": song["al"]["picUrl"] if "al" in song and "picUrl" in song["al"] else None,
+                    "duration": song["duration"]
+                }
+                for song in res.get("result", {}).get("songs", [])
+            ]
+            total = res.get("result", {}).get("songCount", 0)
+            return {
+                "isEnd": total <= page * self.page_size,
+                "data": songs
             }
-            for song in res.get("result", {}).get("songs", [])
-        ]
-        total = res.get("result", {}).get("songCount", 0)
-        return {
-            "isEnd": total <= page * self.page_size,
-            "data": songs
-        }
+        except Exception as e:
+            print(f"搜索音乐失败: {e}")
+            return {
+                "isEnd": True,
+                "data": []
+            }
 
     async def search_album(self, query: str, page: int):
-        res = await self.search_base(query, page, 10)
-        albums = [
-            {
-                "id": album["id"],
-                "title": album["name"],
-                "artist": album["artist"]["name"] if "artist" in album else None,
-                "artwork": album["picUrl"] if "picUrl" in album else None,
-                "publishDate": album.get("publishTime")
+        try:
+            res = await self.search_base(query, page, 10)
+            albums = [
+                {
+                    "id": album["id"],
+                    "title": album["name"],
+                    "artist": album["artist"]["name"] if "artist" in album else None,
+                    "artwork": album["picUrl"] if "picUrl" in album else None,
+                    "publishDate": album.get("publishTime")
+                }
+                for album in res.get("result", {}).get("albums", [])
+            ]
+            total = res.get("result", {}).get("albumCount", 0)
+            return {
+                "isEnd": total <= page * self.page_size,
+                "data": albums,
             }
-            for album in res.get("result", {}).get("albums", [])
-        ]
-        total = res.get("result", {}).get("albumCount", 0)
-        return {
-            "isEnd": total <= page * self.page_size,
-            "data": albums,
-        }
+        except Exception as e:
+            print(f"搜索专辑失败: {e}")
+            return {
+                "isEnd": True,
+                "data": []
+            }
 
     async def search_artist(self, query: str, page: int):
-        res = await self.search_base(query, page, 100)
-        artists = [
-            {
-                "id": artist["id"],
-                "name": artist["name"],
-                "avatar": artist.get("img1v1Url"),
-                "albumCount": artist.get("albumSize", 0)
+        try:
+            res = await self.search_base(query, page, 100)
+            artists = [
+                {
+                    "id": artist["id"],
+                    "name": artist["name"],
+                    "avatar": artist.get("img1v1Url"),
+                    "albumCount": artist.get("albumSize", 0)
+                }
+                for artist in res.get("result", {}).get("artists", [])
+            ]
+            total = res.get("result", {}).get("artistCount", 0)
+            return {
+                "isEnd": total <= page * self.page_size,
+                "data": artists
             }
-            for artist in res.get("result", {}).get("artists", [])
-        ]
-        total = res.get("result", {}).get("artistCount", 0)
-        return {
-            "isEnd": total <= page * self.page_size,
-            "data": artists
-        }
+        except Exception as e:
+            print(f"搜索歌手失败: {e}")
+            return {
+                "isEnd": True,
+                "data": []
+            }
 
     async def search_playlist(self, query: str, page: int):
-        res = await self.search_base(query, page, 1000)
-        playlists = [
-            {
-                "id": pl["id"],
-                "title": pl["name"],
-                "creator": pl["creator"]["nickname"] if "creator" in pl else None,
-                "playCount": pl["playCount"],
-                "trackCount": pl["trackCount"],
-                "artwork": pl.get("coverImgUrl"),
+        try:
+            res = await self.search_base(query, page, 1000)
+            playlists = [
+                {
+                    "id": pl["id"],
+                    "title": pl["name"],
+                    "creator": pl["creator"]["nickname"] if "creator" in pl else None,
+                    "playCount": pl["playCount"],
+                    "trackCount": pl["trackCount"],
+                    "artwork": pl.get("coverImgUrl"),
+                }
+                for pl in res.get("result", {}).get("playlists", [])
+            ]
+            total = res.get("result", {}).get("playlistCount", 0)
+            return {
+                "isEnd": total <= page * self.page_size,
+                "data": playlists
             }
-            for pl in res.get("result", {}).get("playlists", [])
-        ]
-        total = res.get("result", {}).get("playlistCount", 0)
-        return {
-            "isEnd": total <= page * self.page_size,
-            "data": playlists
-        }
-
-    async def search_lyric(self, query: str, page: int):
-        res = await self.search_base(query, page, 1006)
-        songs = res.get("result", {}).get("songs", [])
-        lyrics = []
-        for s in songs:
-            lyrics.append({
-                "id": s["id"],
-                "title": s["name"],
-                "artist": ",".join([ar["name"] for ar in s.get("ar", [])]),
-                "album": s.get("al", {}).get("name"),
-                "artwork": s.get("al", {}).get("picUrl"),
-                "rawLyrics": "\n".join(s.get("lyrics", [])) if s.get("lyrics") else None
-            })
-        total = res.get("result", {}).get("songCount", 0)
-        return {
-            "isEnd": total <= page * self.page_size,
-            "data": lyrics
-        }
+        except Exception as e:
+            print(f"搜索歌单失败: {e}")
+            return {
+                "isEnd": True,
+                "data": []
+            }
 
     async def get_media_source(self, song_id: str, quality: str = "high"):
         """
         通过第三方API获取网易云音乐歌曲对应质量的播放链接
-        :param music_item: 歌曲信息，需包含'id'字段
+        :param song_id: 歌曲ID
         :param quality: 音质，low/standard/high/super
         :return: dict, 包含 'url' 键
         """
@@ -237,44 +262,74 @@ class NetEaseMusicAPI:
         if not quality_param:
             raise ValueError(f"未知音质: {quality}，可选：{list(self.quality_levels.keys())}")
 
+        # 检查必要参数
+        if not self.API_URL:
+            raise ValueError("API_URL 未配置")
+            
+        if not self.API_KEY:
+            raise ValueError("API_KEY 未配置")
+
         url = f"{self.API_URL}/url?source=wy&songId={song_id}&quality={quality_param}"
         headers = {
             "X-Request-Key": self.API_KEY,
         }
-        async with self.session.get(url, headers=headers) as resp:
-            resp.raise_for_status()
-            return await resp.json()
+        
+        session = await self.get_session()
+        try:
+            async with session.get(url, headers=headers) as resp:
+                resp.raise_for_status()
+                result = await resp.json()
+                return {"url": result.get("url")}
+        except Exception as e:
+            print(f"获取播放链接失败: {e}")
+            return {"url": None}
         
     async def fetch_extra(self, song_id):
         """
         获取额外信息
         """
-        url = f"https://api.paugram.com/netease/?id={song_id}"
-        result =  await self._request(url)
-        return {
-            "title": result.get("title"),
-            "artist": result.get("artist"),
-            "album": result.get("album"),
-            "cover": result.get("cover"),
-            "link": result.get("link"),
-        }
+        try:
+            url = f"https://api.paugram.com/netease/?id={song_id}"
+            result = await self._request(url)
+            return {
+                "title": result.get("title"),
+                "artist": result.get("artist"),
+                "album": result.get("album"),
+                "cover": result.get("cover"),
+                "link": result.get("link"),
+            }
+        except Exception as e:
+            print(f"获取额外信息失败: {e}")
+            return {
+                "title": "",
+                "artist": "",
+                "album": "",
+                "cover": "",
+                "link": "",
+            }
     
 
 # 示例测试方法：
 
 async def main():
-    api = NetEaseMusicAPI(api_key='')
-    ret = await api.search_music("恒温", 1)
-    print(f"找到以下歌曲喵~\n" + "\n".join(
-            f"{i + 1}. {song['title']} - {song['artist']} ({song['duration'] // 1000}秒)"
-            for i, song in enumerate(ret['data'])
-        ))
-    music_id = ret["data"][0]['id']
-    resp = await api.get_media_source(music_id, "high")
-    
-    print(f"歌曲{ret['data'][0]['title']}   歌曲相关信息：{resp}")
-    for item in ret["data"]:
-        print(item)
+    api = NetEaseMusicAPI(api_url="http://api.ikunshare.com", api_key="test_key")
+    try:
+        ret = await api.search_music("恒温", 1)
+        print(f"找到以下歌曲喵~\n" + "\n".join(
+                f"{i + 1}. {song['title']} - {song['artist']} ({song['duration'] // 1000}秒)"
+                for i, song in enumerate(ret['data'])
+            ))
+        if ret["data"]:
+            music_id = ret["data"][0]['id']
+            resp = await api.get_media_source(music_id, "high")
+            
+            print(f"歌曲{ret['data'][0]['title']}   歌曲相关信息：{resp}")
+            for item in ret["data"]:
+                print(item)
+    except Exception as e:
+        print(f"测试出错: {e}")
+    finally:
+        await api.close()
 
 if __name__ == "__main__":
     asyncio.run(main())

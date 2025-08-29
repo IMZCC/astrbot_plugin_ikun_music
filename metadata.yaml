@@ -1,6 +1,19 @@
 name: astrbot_plugin_ikun_music # 这是你的插件的唯一识别名。
 desc: 基于 IKUN 音源的音乐插件
-help: # 插件的帮助信息
-version: v1.0.0 # 插件版本号。格式：v1.1.1 或者 v1.1
+help: |
+  使用方法:
+  1. 发送 "music <歌曲名>" 搜索音乐
+  2. 发送 "music source" 查看和切换音乐源
+  3. 发送 "music lyric <歌曲名>" 查看歌词
+  4. 根据提示输入序号选择歌曲
+  
+  配置说明:
+  - api_url: IKUN 音源 URL
+  - api_key: IKUN 音源密钥
+  - music_source: 音乐源 (wy=网易云音乐, qq=QQ音乐)
+  - send_mode: 发送模式 (card=音乐卡片, record=语音消息, text=文本链接)
+  - timeout: 等待选择超时时间
+  - page_size: 搜索结果数量
+version: v1.1.0 # 插件版本号。格式：v1.1.1 或者 v1.1
 author: IMZCC # 作者
 repo: https://github.com/IMZCC/astrbot_plugin_ikun_music # 插件的仓库地址

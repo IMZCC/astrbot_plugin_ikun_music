@@ -8,7 +8,6 @@
 
 - ✅ 音乐搜索 - 支持按歌曲名搜索
 - ✅ 获取播放链接 - 支持多种音质（low/standard/high/super）
-- ✅ 获取歌词 - 支持原文和翻译
 - ⚠️ 专辑搜索 - 部分支持（API限制）
 - ⚠️ 歌手搜索 - 部分支持（API限制）
 - ⚠️ 歌单搜索 - 部分支持（API限制）
@@ -38,9 +37,6 @@ async def main():
                 media = await api.get_media_source(songmid, "high")
                 print(f"播放链接：{media['url']}")
                 
-                # 获取歌词
-                lyrics = await api.get_lyric(song)
-                print(f"歌词：{lyrics['rawLrc'][:100]}...")
     
     finally:
         await api.close()
@@ -95,8 +91,6 @@ api = QQMusicAPI(
 #### search_playlist(query, page)
 搜索歌单（功能有限）
 
-#### search_lyric(query, page)
-搜索歌词
 
 ### 播放相关方法
 
@@ -118,19 +112,6 @@ api = QQMusicAPI(
 }
 ```
 
-#### get_lyric(music_item)
-获取歌词
-
-**参数：**
-- `music_item` (dict): 包含songmid的歌曲信息
-
-**返回：**
-```python
-{
-    "rawLrc": str,        # 原始歌词（LRC格式）
-    "translation": str    # 翻译歌词
-}
-```
 
 ## 注意事项
 
